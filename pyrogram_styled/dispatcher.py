@@ -103,10 +103,10 @@ class Dispatcher:
                 await pyrogram_styled.types.Poll._parse_update(self.client, update, users, chats),
                 PollHandler
             )
-        
+
         async def poll_answer_parser(update, users, chats):
             return (
-                pyrogram_styled.types.PollAnswer._parse_update(
+                await pyrogram_styled.types.PollAnswer._parse_update(
                     self.client, update, users, chats
                 ),
                 PollHandler
@@ -230,10 +230,13 @@ class Dispatcher:
             except pyrogram_styled.StopPropagation:
                 pass
             except Exception as e:
-                log.exception(e)
+                if type(e).__name__ in ("ContinuePropagation", "StopPropagation"):
+                    pass
+                else:
+                    log.exception(e)
             finally:
                 self.updates_queue.task_done()
-    
+
     async def _handle_packet(self, packet, lock: asyncio.Lock):
         update, users, chats = packet
         parser = self.update_parsers.get(type(update))
@@ -247,6 +250,8 @@ class Dispatcher:
         except (KeyError, IndexError):
             return
         except Exception as e:
+            if type(e).__name__ in ("ContinuePropagation", "StopPropagation"):
+                return
             log.exception(e)
             return
         async with lock:
@@ -271,6 +276,10 @@ class Dispatcher:
                 except pyrogram_styled.ContinuePropagation:
                     continue
                 except Exception as error:
+                    if type(error).__name__ == "ContinuePropagation":
+                        continue
+                    if type(error).__name__ == "StopPropagation":
+                        raise error
                     if parsed_update is not None:
                         await self._handle_exception(parsed_update, error)
                 break
@@ -286,7 +295,8 @@ class Dispatcher:
                 if await handler.check(self.client, update):
                     return (update, users, chats)
         except Exception as e:
-            log.exception(e)
+            if type(e).__name__ not in ("ContinuePropagation", "StopPropagation"):
+                log.exception(e)
 
         return None
 
@@ -317,7 +327,13 @@ class Dispatcher:
             except pyrogram_styled.ContinuePropagation:
                 continue
             except Exception as inner_exception:
+                if type(inner_exception).__name__ == "ContinuePropagation":
+                    continue
+                if type(inner_exception).__name__ == "StopPropagation":
+                    raise inner_exception
                 log.exception("Error in error handler: %s", inner_exception)
 
         if not handled_error:
+            if type(exception).__name__ == "ContinuePropagation":
+                return
             log.exception("Unhandled exception: %s", exception)
